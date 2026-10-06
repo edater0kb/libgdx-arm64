@@ -1,0 +1,79 @@
+name: Build libGDX 0.9.9 arm64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Descargar libGDX 0.9.9
+        uses: actions/checkout@v4
+        with:
+          repository: libgdx/libgdx
+          ref: 0.9.9
+          path: libgdx
+          fetch-depth: 1
+
+      - name: Instalar NDK r21e
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r21e
+
+      - name: Preparar Application.mk (solo arm64)
+        run: |
+          mkdir -p out
+          cat > out/Application.mk <<'EOF'
+          APP_ABI := arm64-v8a
+          APP_PLATFORM := android-21
+          APP_STL := c++_static
+          APP_CFLAGS += -w -Wno-error -Wno-error=format-security
+          APP_CPPFLAGS += -w -Wno-error -Wno-c++11-narrowing
+          EOF
+          sed -i 's/^          //' out/Application.mk
+          cat out/Application.mk
+          echo "--- contenido de gdx/jni ---"
+          ls libgdx/gdx/jni | head -50
+          echo "--- contenido de backend android jni ---"
+          ls libgdx/backends/gdx-backend-android/jni | head -50
+
+      - name: Compilar libgdx.so
+        run: |
+          set -o pipefail
+          cd libgdx/gdx
+          "${{ steps.ndk.outputs.ndk-path }}/ndk-build" \
+            NDK_PROJECT_PATH="$PWD" \
+            APP_BUILD_SCRIPT="$PWD/jni/Android.mk" \
+            NDK_APPLICATION_MK="$GITHUB_WORKSPACE/out/Application.mk" \
+            NDK_OUT="$GITHUB_WORKSPACE/out/gdx/obj" \
+            NDK_LIBS_OUT="$GITHUB_WORKSPACE/out/gdx/libs" \
+            -j4 2>&1 | tee "$GITHUB_WORKSPACE/out/build-gdx.log"
+
+      - name: Compilar libandroidgl20.so
+        run: |
+          set -o pipefail
+          cd libgdx/backends/gdx-backend-android
+          "${{ steps.ndk.outputs.ndk-path }}/ndk-build" \
+            NDK_PROJECT_PATH="$PWD" \
+            APP_BUILD_SCRIPT="$PWD/jni/Android.mk" \
+            NDK_APPLICATION_MK="$GITHUB_WORKSPACE/out/Application.mk" \
+            NDK_OUT="$GITHUB_WORKSPACE/out/gl20/obj" \
+            NDK_LIBS_OUT="$GITHUB_WORKSPACE/out/gl20/libs" \
+            -j4 2>&1 | tee "$GITHUB_WORKSPACE/out/build-gl20.log"
+
+      - name: Verificar arquitectura
+        run: |
+          find out -name "*.so" -path "*arm64-v8a*" -exec file {} \;
+
+      - name: Subir resultado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libgdx-arm64
+          path: |
+            out/gdx/libs/arm64-v8a/*.so
+            out/gl20/libs/arm64-v8a/*.so
+            out/*.log
+          if-no-files-found: warn
+          
